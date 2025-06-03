@@ -2,21 +2,22 @@ name: Sync Fork
 
 on:
   schedule:
-    - cron: '0 0 * * 1'
-  workflow_dispatch:
+    - cron: '0 0 * * 1'  # Weekly sync (every Monday at midnight)
+  workflow_dispatch:      # Manual trigger option
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      workflows: write  # Required to update workflow files
+      contents: write    # For pushing code
+      actions: write     # For modifying workflow files
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Fetch all history
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
