@@ -1,55 +1,32 @@
-name: Sync Fork (Robust Version)
+name: Sync Fork
 
 on:
   schedule:
-    - cron: '0 0 * * 1'  # Weekly sync
-  workflow_dispatch:
+    - cron: '0 0 * * 1'  # Weekly sync (every Monday at midnight)
+  workflow_dispatch:      # Manual trigger option
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      actions: write
-      pull-requests: write  # Additional permission that sometimes helps
+      contents: write    # Required to push to the repository
 
     steps:
-      - name: Checkout with full history
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          persist-credentials: true  # Critical for subsequent git operations
+          fetch-depth: 0  # Fetch all history
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure Git
+      - name: Add upstream repository
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git config --global http.postBuffer 524288000  # Helps with large repos
-
-      - name: Add/Fetch upstream
-        run: |
-          git remote remove upstream || true
           git remote add upstream https://github.com/whiteout-project/bot
-          git fetch --all --tags --prune --prune-tags
-
-      - name: Smart Merge
+          git fetch upstream
+      - name: Merge upstream changes
         run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
           git checkout main
-          if git merge-base --is-ancestor upstream/main main; then
-            echo "Already up-to-date"
-            exit 0
-          fi
-          
-          # Attempt merge with conflict handling
-          if ! git merge --no-edit --no-ff --strategy-option theirs upstream/main; then
-            echo "::warning::Merge conflict detected, attempting reset..."
-            git reset --hard upstream/main
-            git push --force origin main
-            exit 0
-          fi
-
+          git merge --no-edit upstream/main
       - name: Push changes
-        run: |
-          git remote -v
-          git branch -vv
-          git push origin main
+        run: git push origin main
