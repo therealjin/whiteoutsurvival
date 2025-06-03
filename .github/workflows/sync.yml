@@ -1,22 +1,24 @@
-name: Sync Fork
+name: Sync Fork (Full Sync)
 
 on:
   schedule:
-    - cron: '0 0 * * 1'  # Weekly sync (every Monday at midnight)
-  workflow_dispatch:      # Manual trigger option
+    - cron: '0 0 * * 1'  # Weekly at midnight Monday
+  workflow_dispatch:     # Manual trigger option
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # Grant all necessary permissions
     permissions:
-      contents: write    # For pushing code
-      actions: write     # For modifying workflow files
+      contents: write    # For code changes
+      actions: write     # For workflow modifications
+      workflows: write   # Explicit workflow permission
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch all history
+          fetch-depth: 0  # Full history
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
@@ -24,12 +26,12 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
 
-      - name: Add upstream repository
+      - name: Add upstream
         run: |
           git remote add upstream https://github.com/whiteout-project/bot || git remote set-url upstream https://github.com/whiteout-project/bot
           git fetch upstream
 
-      - name: Merge upstream changes
+      - name: Merge changes
         run: |
           git checkout main
           git merge --no-edit upstream/main || {
@@ -40,4 +42,4 @@ jobs:
 
       - name: Push changes
         run: |
-          git push "https://$GITHUB_ACTOR:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY" main
+          git push "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main
