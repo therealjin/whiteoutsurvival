@@ -211,6 +211,12 @@ class GiftOperations(commands.Cog):
         except Exception as e:
             self.logger.exception(f"Error setting up test FID table: {e}")
 
+    def clean_gift_code(self, giftcode):
+        """Remove invisible Unicode characters (like RLM) that can contaminate gift codes"""
+        import unicodedata
+        cleaned = ''.join(char for char in giftcode if unicodedata.category(char)[0] != 'C')
+        return cleaned.strip()
+    
     @commands.Cog.listener()
     async def on_ready(self):
         """
@@ -379,6 +385,8 @@ class GiftOperations(commands.Cog):
                 code_match = re.search(r'Code:\s*(\S+)', content, re.IGNORECASE)
                 if code_match:
                     giftcode = code_match.group(1)
+            if giftcode:
+                giftcode = self.clean_gift_code(giftcode)
             if not giftcode:
                 self.logger.debug(f"[on_message] No valid gift code format found in message {message.id}")
                 return
@@ -415,7 +423,8 @@ class GiftOperations(commands.Cog):
                 if auto_alliances:
                     self.logger.info(f"GiftOps: [on_message] Triggering auto-use for {len(auto_alliances)} alliances for code '{giftcode}'.")
                     for alliance in auto_alliances:
-                        asyncio.create_task(self.use_giftcode_for_alliance(alliance[0], giftcode))
+                        await self.use_giftcode_for_alliance(alliance[0], giftcode)
+
                 else:
                     self.logger.info(f"GiftOps: [on_message] No alliances configured for auto-use.")
 
@@ -547,7 +556,7 @@ class GiftOperations(commands.Cog):
             self.logger.exception(f"Error getting test FID: {e}")
             return "244886619"
 
-    def encode_data(self, data):
+    def encode_data(self, data, debug_sign_error=False):
         secret = self.wos_encrypt_key
         sorted_keys = sorted(data.keys())
         encoded_data = "&".join(
@@ -557,6 +566,15 @@ class GiftOperations(commands.Cog):
             ]
         )
         sign = hashlib.md5(f"{encoded_data}{secret}".encode()).hexdigest()
+
+        if debug_sign_error: # Debug logging for sign error when requested
+            self.logger.error(f"[SIGN ERROR DEBUG] Input data: {data}")
+            self.logger.error(f"[SIGN ERROR DEBUG] Encoded data: {encoded_data}")
+            self.logger.error(f"[SIGN ERROR DEBUG] String being hashed: {encoded_data}{secret}")
+            self.logger.error(f"[SIGN ERROR DEBUG] Secret key: {secret}")
+            self.logger.error(f"[SIGN ERROR DEBUG] Generated signature: {sign}")
+            self.logger.error(f"[SIGN ERROR DEBUG] Final payload: {{'sign': '{sign}', **{data}}}")
+        
         return {"sign": sign, **data}
 
     def get_stove_info_wos(self, player_id):
@@ -583,7 +601,8 @@ class GiftOperations(commands.Cog):
         return session, response_stove_info
 
     async def claim_giftcode_rewards_wos(self, player_id, giftcode):
-        
+
+        giftcode = self.clean_gift_code(giftcode)
         process_start_time = time.time()
         status = "ERROR"
         image_bytes = None
@@ -732,6 +751,14 @@ class GiftOperations(commands.Cog):
                     status = "USAGE_LIMIT"
                 elif msg == "TIMEOUT RETRY" and err_code == 40004:
                     status = "TIMEOUT_RETRY"
+                elif "sign error" in msg.lower():
+                    status = "SIGN_ERROR"
+                    # Log the request that caused the sign error for debugging purposes
+                    self.logger.error(f"[SIGN ERROR] Sign error detected for FID {player_id}, code {giftcode}")
+                    self.logger.error(f"[SIGN ERROR] Original request data: fid={player_id}, cdk={giftcode}, captcha_code={captcha_code}, time={int(datetime.now().timestamp()*1000)}")
+                    debug_data_to_encode = {"fid": f"{player_id}", "cdk": giftcode, "captcha_code": captcha_code, "time": f"{int(datetime.now().timestamp()*1000)}"}
+                    self.encode_data(debug_data_to_encode, debug_sign_error=True)
+                    self.logger.error(f"[SIGN ERROR] Response that caused sign error: {response_json_redeem}")
                 else:
                     status = "UNKNOWN_API_RESPONSE"
                     self.giftlog.info(f"Unknown API response for {player_id}: msg='{msg}', err_code={err_code}\n")
@@ -936,6 +963,8 @@ class GiftOperations(commands.Cog):
                         if re.match(r'^[a-zA-Z0-9]+$', potential_code):
                             giftcode = potential_code
 
+                if giftcode:
+                    giftcode = self.clean_gift_code(giftcode)
                 if not giftcode:
                     continue
 
@@ -973,7 +1002,7 @@ class GiftOperations(commands.Cog):
                     if auto_alliances:
                         self.logger.info(f"GiftOps: [Loop] Triggering auto-use for {len(auto_alliances)} alliances for '{code}'.")
                         for alliance in auto_alliances:
-                            asyncio.create_task(self.use_giftcode_for_alliance(alliance[0], code))
+                            await self.use_giftcode_for_alliance(alliance[0], code)
                 except sqlite3.Error as db_ins_err:
                     self.logger.exception(f"GiftOps: [Loop] DB ERROR inserting code '{code}': {db_ins_err}")
                     processed_code_statuses[code] = "ERROR"
@@ -1136,11 +1165,11 @@ class GiftOperations(commands.Cog):
                         name="⚠️ Missing Library",
                         value=(
                             "The `ddddocr` library is required for CAPTCHA solving.\n"
-                            "It did not initialize. The bot owner needs to fix this."
-                            "Try the following sequence of commands on the bot command line:"
-                            "pip uninstall ddddocr opencv-python opencv-python-headless onnxruntime numpy -y"
-                            "pip install numpy Pillow opencv-python-headless onnxruntime --no-cache-dir --force-reinstall"
-                            "pip install ddddocr==1.5.6 --no-cache-dir --force-reinstall --ignore-requires-python"
+                            "It did not initialize. The bot owner needs to fix this.\n"
+                            "Try the following sequence of commands on the bot command line:\n"
+                            "```pip uninstall ddddocr opencv-python opencv-python-headless onnxruntime numpy -y\n"
+                            "pip install numpy Pillow opencv-python-headless onnxruntime --no-cache-dir --force-reinstall\n"
+                            "pip install ddddocr==1.5.6 --no-cache-dir --force-reinstall --ignore-requires-python\n"
                         ), inline=False
                     )
 
@@ -2497,13 +2526,38 @@ class GiftOperations(commands.Cog):
                     try:
                         await status_message.edit(embed=embed)
                     except Exception as embed_edit_err:
-                        self.logger.warning(f"GiftOps: WARN - Failed to update progress embed to show code invalidation: {embed_edit_err}")
+                        self.logger.warning(f"GiftOps: Failed to update progress embed to show code invalidation: {embed_edit_err}")
                     
                     if fid not in failed_users_dict:
                         processed_count +=1 
                         failed_count +=1
                         failed_users_dict[fid] = (nickname, f"Led to code invalidation ({response_status})", current_cycle_count + 1)
                     continue
+                
+                if response_status == "SIGN_ERROR":
+                    self.logger.error(f"GiftOps: Sign error detected (likely wrong encrypt key). Stopping redemption for alliance {alliance_id}.")
+                    
+                    embed.title = f"⚙️ Sign Error: {giftcode}"
+                    embed.color = discord.Color.red()
+                    embed.description = (
+                        f"**Bot Configuration Error**\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🎁 **Gift Code:** `{giftcode}`\n"
+                        f"🏰 **Alliance:** `{alliance_name}`\n"
+                        f"⚙️ **Reason:** Sign Error (check bot config/encrypt key)\n"
+                        f"📝 **Action:** Redemption stopped. Check bot configuration.\n"
+                        f"📊 **Processed before halt:** {processed_count}/{total_members}\n"
+                        f"⏰ **Time:** <t:{int(datetime.now().timestamp())}:R>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    )
+                    embed.clear_fields()
+                    
+                    try:
+                        await status_message.edit(embed=embed)
+                    except Exception as embed_edit_err:
+                        self.logger.warning(f"GiftOps: Failed to update progress embed for sign error: {embed_edit_err}")
+
+                    break
 
                 # Handle Response
                 mark_processed = False
@@ -2668,7 +2722,7 @@ class CreateGiftCodeModal(discord.ui.Modal):
         await interaction.response.defer(ephemeral=True)
         logger.info("[CreateGiftCodeModal] Interaction deferred.")
 
-        code = self.giftcode.value
+        code = self.cog.clean_gift_code(self.giftcode.value)
         logger.info(f"[CreateGiftCodeModal] Code entered: {code}")
 
         final_embed = discord.Embed(title="🎁 Gift Code Creation Result")
